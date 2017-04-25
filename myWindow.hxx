@@ -61,6 +61,8 @@ protected slots:
   void UpdateImage();
   /** Slot handling stop button click (Record button becomes Stop after clicking) */
   void Stop();
+  /** Start the optic nerve estimation */
+  void OpticNerve();
 
   void SetPulseMin();
   void SetPulseMax();

@@ -30,6 +30,11 @@ limitations under the License.
 #include <iostream>
 #include <QtGui>
 
+#include "itkBinaryImageToLabelMapFilter.h"
+#include "itkLabelMapToLabelImageFilter.h"
+#include "itkLabelOverlayImageFilter.h"
+
+
 #include "PlusTrackedFrame.h"
 #include "vtkPlusTrackedFrameList.h"
 #include <vtkSmartPointer.h>
@@ -44,6 +49,10 @@ limitations under the License.
 #include <QVTKWidget.h>
 #include <QFileDialog>
 #include <vtkInteractorStyleImage.h>
+
+#include "EstimateEyeAndStem.hxx"
+#include "ImageIO.h"
+#include "ITKFilterFunctions.h"
 
 // Interson Array probe
 const double IntersonFrequencies[] = { 5.0, 7.5, 10.0 };
@@ -68,6 +77,8 @@ myWindow::myWindow(QWidget *parent)
 	connect(ui->pulseMin, SIGNAL(valueChanged(int)), this, SLOT(SetPulseMin()));
 	connect(ui->pulseMax, SIGNAL(valueChanged(int)), this, SLOT(SetPulseMax()));
 	connect(ui->pulseStep, SIGNAL(valueChanged(int)), this, SLOT(SetPulseStep()));
+
+    connect( ui->pushButton_opticNerve, SIGNAL(clicked()), this, SLOT(OpticNerve()));
 
 	ui->pushButton_start->setIcon(QPixmap("../UltrasoundSpectroscopyRecorder/Resources/icon_Record.png"));
 	//ui->pushButton_start->setFocus();
@@ -439,4 +450,86 @@ void myWindow::WriteToFile(const QString& aFilename)
 	recordedFrames->Clear();
 
 	QApplication::restoreOverrideCursor();
+}
+
+void myWindow::OpticNerve()
+{
+  typedef itk::Image<unsigned char, 2>  UnsignedCharImageType;
+  typedef itk::CastImageFilter< ImageType, UnsignedCharImageType > CastFilter;
+  typedef itk::RGBPixel<unsigned char> RGBPixelType;
+  typedef itk::Image<RGBPixelType> RGBImageType;
+  typedef itk::LabelOverlayImageFilter<ImageType, UnsignedCharImageType, RGBImageType> LabelOverlayImageFilterType;
+  typedef itk::BinaryImageToLabelMapFilter<UnsignedCharImageType> BinaryImageToLabelMapFilterType;
+
+  
+  QDirIterator it( outputFolder, QStringList() << "*.nrrd", QDir::Files, QDirIterator::Subdirectories );
+  std::string prefix = "";
+  bool noiArg = false;
+  while( it.hasNext() )
+    {
+    qDebug() << it.next();
+  
+    ////
+    //1. Read and preprocess the ultrasound image
+    ////
+    ImageType::Pointer origImage = ImageIO<ImageType>::ReadImage( it.fileName().toStdString() );
+    std::cout << it.fileName().toStdString() << std::endl;
+
+    /////
+    //2. Fit eye
+    ////
+    Eye eye = fitEye( origImage, prefix, noiArg );
+
+    ////
+    //3. Fit stem using eye size and location estimates
+    ////
+    Stem stem = fitStem( origImage, eye, prefix, noiArg );
+
+    std::cout << std::endl;
+    std::cout << "Estimated optic nerve width: " << 2 * stem.width << std::endl;
+    std::cout << std::endl;
+
+    ////
+    //4. Create overlay image
+    ////
+    ImageType::Pointer moved = ImageIO<ImageType>::CopyImage( eye.aligned );
+
+    itk::ImageRegionIterator<ImageType> eyeIterator( moved, stem.originalImageRegion );
+    itk::ImageRegionIterator<ImageType> stemIterator( stem.aligned, stem.aligned->GetLargestPossibleRegion() );
+    while( !eyeIterator.IsAtEnd() )
+      {
+
+      eyeIterator.Set( eyeIterator.Get() + stemIterator.Get() );
+      ++eyeIterator;
+      ++stemIterator;
+      }
+
+    moved = ITKFilterFunctions<ImageType>::ThresholdAbove( moved, 5, 255 );
+
+    CastFilter::Pointer movingCast = CastFilter::New();
+    movingCast->SetInput( moved );
+
+  #ifdef DEBUG_IMAGES
+    ImageIO<ImageType>::WriteImage( moved, catStrings( prefix, "-joint-moved.tif" ) );
+  #endif
+
+    BinaryImageToLabelMapFilterType::Pointer binaryImageToLabelMapFilter = BinaryImageToLabelMapFilterType::New();
+    binaryImageToLabelMapFilter->SetInput( movingCast->GetOutput() );
+    binaryImageToLabelMapFilter->Update();
+
+    typedef itk::LabelMapToLabelImageFilter<BinaryImageToLabelMapFilterType::OutputImageType, UnsignedCharImageType> LabelMapToLabelImageFilterType;
+    LabelMapToLabelImageFilterType::Pointer labelMapToLabelImageFilter = LabelMapToLabelImageFilterType::New();
+    labelMapToLabelImageFilter->SetInput( binaryImageToLabelMapFilter->GetOutput() );
+    labelMapToLabelImageFilter->Update();
+
+
+    ImageType::Pointer imageRescaled = ITKFilterFunctions<ImageType>::Rescale( origImage, 0, 255 );
+    LabelOverlayImageFilterType::Pointer labelOverlayImageFilter = LabelOverlayImageFilterType::New();
+    labelOverlayImageFilter->SetInput( imageRescaled );
+    labelOverlayImageFilter->SetLabelImage( labelMapToLabelImageFilter->GetOutput() );
+    labelOverlayImageFilter->SetOpacity( .25 );
+    labelOverlayImageFilter->Update();
+
+    ImageIO<RGBImageType>::WriteImage( labelOverlayImageFilter->GetOutput(), "-overlay.png" );
+    }
 }

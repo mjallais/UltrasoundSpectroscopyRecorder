@@ -8,6 +8,9 @@ include( ${PlusLib_USE_FILE} )
 find_package( VTK REQUIRED )
 include( ${VTK_USE_FILE} )
 
+find_package( ITK REQUIRED )
+include( ${ITK_USE_FILE} )
+
 find_package(Qt5 COMPONENTS Core Widgets REQUIRED)
 
 qt5_wrap_ui( mytest_UI_H UltrasoundSpectroscopyRecorder.ui )
@@ -19,6 +22,8 @@ set( source_files
   myWindow.hxx 
   vtkIntersonSDKCxxVideoSourceWindow.cxx
   vtkIntersonSDKCxxVideoSourceWindow.h
+  EstimateEyeAndStem.cxx
+  EstimateEyeAndStem.hxx
   )
 
 include_directories( ${CMAKE_CURRENT_BINARY_DIR} )
@@ -30,7 +35,8 @@ add_executable( UltrasoundSprectroscopyRecorder
   )
 
 target_link_libraries( UltrasoundSprectroscopyRecorder 
-  ${VTK_LIBRARIES}
   ${PlusLib_LIBRARIES}
+  ${VTK_LIBRARIES}
+  ${ITK_LIBRARIES}
   Qt5::Widgets
   )
